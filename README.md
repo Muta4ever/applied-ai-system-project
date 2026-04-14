@@ -54,6 +54,44 @@ Categorical features get a fixed bonus for exact matches. Numerical features use
 
 All songs are scored, then sorted highest-to-lowest. The top `k` results are returned as recommendations.
 
+---
+
+## Data Flow
+
+```mermaid
+flowchart TD
+    A([User Profile\ngenre · mood · energy · likes_acoustic]) --> B[Load songs.csv\n18 songs]
+    B --> C{For each song...}
+    C --> D[Score: Genre match?\n+3.0 pts if yes]
+    D --> E[Score: Mood match?\n+2.0 pts if yes]
+    E --> F[Score: Energy proximity\n1.0 − |song.energy − target_energy|]
+    F --> G[Score: Acoustic bonus?\n+0.5 pts if likes_acoustic and acousticness > 0.6]
+    G --> H[(song, total_score, explanation)]
+    H --> C
+    C --> I[Sort all songs\nhigh → low score]
+    I --> J([Top K Recommendations])
+```
+
+---
+
+## Algorithm Recipe
+
+| Feature | Type | Rule | Max Points |
+|---|---|---|---|
+| `genre` | categorical | +3.0 if `song.genre == favorite_genre` | 3.0 |
+| `mood` | categorical | +2.0 if `song.mood == favorite_mood` | 2.0 |
+| `energy` | float 0–1 | `1.0 - abs(song.energy - target_energy)` | 1.0 |
+| `acousticness` | float 0–1 | +0.5 if `likes_acoustic` and `song.acousticness > 0.6` | 0.5 |
+
+**Max score: 6.5** — a perfect match on every dimension.
+
+### Expected Bias
+
+- **Genre over-weighting:** A 3-point genre bonus means a song with the right genre but wrong mood will beat a song with the right mood but wrong genre. A jazz fan asking for "chill" music could miss a great ambient track.
+- **Mood blindness across genres:** The system treats genre and mood as independent, but "chill pop" and "chill lofi" are very different experiences — the genre weight may dominate unfairly.
+- **Energy proximity is narrow:** Songs within 0.1 energy of the user's target score nearly the same, which may not reflect how sensitive real listeners are to intensity differences.
+- **Acoustic bonus is binary:** The 0.6 threshold is arbitrary — a song at 0.59 acousticness gets no bonus despite being nearly acoustic.
+
 You can include a simple diagram or bullet list if helpful.
 
 ---
