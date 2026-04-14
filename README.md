@@ -17,15 +17,42 @@ Replace this paragraph with your own summary of what your version does.
 
 ## How The System Works
 
-Explain your design in plain language.
+Real-world recommenders like Spotify use two main strategies: **collaborative filtering** (finding users with similar taste and borrowing their history) and **content-based filtering** (matching song attributes directly to a user's stated preferences). This simulation uses **content-based filtering** — no play history needed, just song attributes and a user taste profile.
 
-Some prompts to answer:
+The system prioritizes three things: matching genre first (strongest signal of taste), matching mood second, and then rewarding songs whose energy level is close to the user's target — not just high or low, but *close*.
 
-- What features does each `Song` use in your system
-  - For example: genre, mood, energy, tempo
-- What information does your `UserProfile` store
-- How does your `Recommender` compute a score for each song
-- How do you choose which songs to recommend
+### Song Features Used
+
+Each `Song` object stores:
+- `genre` — categorical (pop, lofi, rock, jazz, ambient, synthwave, indie pop)
+- `mood` — categorical (happy, chill, intense, relaxed, focused, moody)
+- `energy` — float 0.0–1.0 (how intense/active the track feels)
+- `tempo_bpm` — numeric (beats per minute)
+- `valence` — float 0.0–1.0 (musical positivity/happiness)
+- `danceability` — float 0.0–1.0 (how suitable for dancing)
+- `acousticness` — float 0.0–1.0 (acoustic vs electronic feel)
+
+### UserProfile Fields
+
+Each `UserProfile` stores:
+- `favorite_genre` — the genre the user most wants to hear
+- `favorite_mood` — the emotional tone they're looking for
+- `target_energy` — their preferred energy level (0.0 = very calm, 1.0 = very intense)
+- `likes_acoustic` — boolean preference for acoustic vs electronic sound
+
+### Scoring Rule (per song)
+
+```
+score = genre_match (3.0 pts)
+      + mood_match  (2.0 pts)
+      + energy_proximity  (1.0 - |song.energy - user.target_energy|)
+```
+
+Categorical features get a fixed bonus for exact matches. Numerical features use a proximity formula that gives full credit for a perfect match and decreases as the song drifts from the user's preference.
+
+### Ranking Rule
+
+All songs are scored, then sorted highest-to-lowest. The top `k` results are returned as recommendations.
 
 You can include a simple diagram or bullet list if helpful.
 
