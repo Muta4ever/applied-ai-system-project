@@ -6,11 +6,11 @@
 
 ---
 
-## 2. Intended Use
+## 2. Intended Use and Non-Intended Use
 
-VibeFinder suggests the top 5 songs from an 18-song catalog based on a listener's stated preferences for genre, mood, energy level, and acoustic/electronic feel. It is designed for classroom exploration of how content-based recommendation systems work — not for real users or production deployment.
+**Intended use:** VibeFinder suggests the top 5 songs from an 18-song catalog based on a listener's stated preferences for genre, mood, energy level, and acoustic/electronic feel. It is designed for classroom exploration of how content-based recommendation systems work. It assumes the user can accurately describe their own taste in a short profile. It does not learn or adapt over time.
 
-It assumes the user can accurately describe their own taste in a short profile. It does not learn or adapt over time.
+**Non-intended use:** VibeFinder should not be used as an actual music product, deployed on a platform, or treated as a representative model of how industrial recommenders work. It should not be used to make decisions about which artists or genres deserve visibility — its tiny catalog already reflects the tastes of whoever built it, and using it at scale would amplify that bias. It is not designed to work across languages, cultures, or accessibility needs.
 
 ---
 
@@ -82,4 +82,10 @@ Five user profiles were tested:
 
 ## 9. Personal Reflection
 
-Building VibeFinder made it clear that recommendation is not really about finding the "best" song — it's about finding the song that best matches a specific representation of a person. The moment you reduce a person's taste to four numbers (genre, mood, energy, acoustic), you lose everything that makes taste complex: history, context, nostalgia, language, what you listened to yesterday. The catalog gap experiment was the most eye-opening part: no amount of weight tuning can recommend a song that doesn't exist in the dataset. Real platforms solve this by having millions of songs and millions of user signals — scale is part of the algorithm.
+**Biggest learning moment:** The weight-shift experiment. I expected that halving the genre weight and doubling the energy weight would change which song ranked first for the "conflicting preferences" profile. It didn't — `Spacewalk Thoughts` still won. That forced me to realize the problem wasn't the math; it was the dataset. No high-energy ambient songs exist in the catalog, so no weight adjustment could surface one. That gap between "fixing the algorithm" and "fixing the data" is something real ML engineers deal with constantly, and I didn't fully understand it until I hit it myself.
+
+**How AI tools helped — and when I had to double-check:** AI was useful for generating the scoring formula structure and explaining the difference between `sorted()` and `.sort()` clearly. It was less reliable when suggesting weights — the first suggestion gave genre and mood equal weight, which made the rankings feel flat. I had to test it with adversarial profiles before realizing genre needed to score higher. The AI gave me a starting point; the actual testing revealed what needed to change. You can't skip the running-and-looking step.
+
+**What surprised me about simple algorithms "feeling" like recommendations:** The "Intense Rock" profile returned `Gym Hero` (pop) and `Drop Zone` (EDM) in the top 5. Those felt wrong at first — but then I looked at the scores: both songs matched "intense" mood and had energy above 0.85. The algorithm wasn't broken; it was being consistent in a way that crossed genre lines. Real music taste does that too — a rock fan at the gym might actually like `Drop Zone`. The "feeling" of intelligence came from the mood feature doing real work, not from the system being smart.
+
+**What I would try next:** I'd replace the four-field profile with a set of songs the user already likes — letting the system infer their preferences from their own history instead of asking them to describe themselves. That's closer to how Spotify actually works, and it would immediately fix the "conflicting preferences" problem because the data would be self-consistent.
