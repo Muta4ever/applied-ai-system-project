@@ -333,7 +333,7 @@ The agent's confidence scores were lower than expected for profiles that the eva
 
 ## Video Walkthrough
 
-[Loom walkthrough — add link here after recording]
+[Loom walkthrough — loom website down as of April 28th]
 
 The video demonstrates:
 - End-to-end recommendation for 3 different user profiles
@@ -344,7 +344,7 @@ The video demonstrates:
 
 ## GitHub
 
-[https://github.com/YOUR_USERNAME/applied-ai-system-project](https://github.com/YOUR_USERNAME/applied-ai-system-project)
+[https://github.com/Muta4ever/applied-ai-system-project](https://github.com/Muta4ever/applied-ai-system-project)
 
 ---
 
