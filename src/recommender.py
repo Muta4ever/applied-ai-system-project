@@ -1,5 +1,5 @@
 import csv
-from typing import List, Dict, Tuple
+from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 
 
@@ -295,6 +295,7 @@ def recommend_songs(
     diversity: bool = True,
     max_per_artist: int = 1,
     max_per_genre: int = 2,
+    weights_override: Optional[Dict[str, float]] = None,
 ) -> List[Tuple[Dict, float, str]]:
     """
     Score every song, sort high-to-low, apply optional diversity filter, return top k.
@@ -303,9 +304,13 @@ def recommend_songs(
 
     Challenge 2: reads scoring_mode from user_prefs to pick the weight set.
     Challenge 3: diversity=True enforces per-artist and per-genre caps.
+    weights_override: when provided by RecommendationAgent, bypasses scoring_mode selection.
     """
-    mode_name = user_prefs.get("scoring_mode", "genre-first")
-    weights = SCORING_MODES.get(mode_name, SCORING_MODES["genre-first"])
+    if weights_override:
+        weights = weights_override
+    else:
+        mode_name = user_prefs.get("scoring_mode", "genre-first")
+        weights = SCORING_MODES.get(mode_name, SCORING_MODES["genre-first"])
 
     scored: List[Tuple[Dict, float, str]] = []
     for song in songs:

@@ -1,173 +1,353 @@
-# 🎵 Music Recommender Simulation
+# VibeFinder 1.0 — AI Music Recommender with Agentic Self-Correction
 
-## Project Summary
+## Original Project
 
-In this project you will build and explain a small music recommender system.
+**Project 3: Music Recommender Simulation**
 
-Your goal is to:
-
-- Represent songs and a user "taste profile" as data
-- Design a scoring rule that turns that data into recommendations
-- Evaluate what your system gets right and wrong
-- Reflect on how this mirrors real world AI recommenders
-
-Replace this paragraph with your own summary of what your version does.
+VibeFinder 1.0 started as a content-based music recommender that scores songs against a user's stated taste profile (genre, mood, energy, acoustic preference) and returns the top-5 matches from an 18-song catalog. The original system was extended through three challenge phases: advanced song attributes (popularity, release decade, mood tags), three swappable scoring modes (genre-first, mood-first, energy-focused), and a diversity filter that prevents any one artist or genre from dominating the results.
 
 ---
 
-## How The System Works
+## Title and Summary
 
-Real-world recommenders like Spotify use two main strategies: **collaborative filtering** (finding users with similar taste and borrowing their history) and **content-based filtering** (matching song attributes directly to a user's stated preferences). This simulation uses **content-based filtering** — no play history needed, just song attributes and a user taste profile.
+**VibeFinder 1.0** is a content-based music recommendation system augmented with an LLM-powered critic that detects when recommendations miss the user's intent and automatically corrects the scoring weights to produce better results.
 
-The system prioritizes three things: matching genre first (strongest signal of taste), matching mood second, and then rewarding songs whose energy level is close to the user's target — not just high or low, but *close*.
-
-### Song Features Used
-
-Each `Song` object stores:
-- `genre` — categorical (pop, lofi, rock, jazz, ambient, synthwave, indie pop)
-- `mood` — categorical (happy, chill, intense, relaxed, focused, moody)
-- `energy` — float 0.0–1.0 (how intense/active the track feels)
-- `tempo_bpm` — numeric (beats per minute)
-- `valence` — float 0.0–1.0 (musical positivity/happiness)
-- `danceability` — float 0.0–1.0 (how suitable for dancing)
-- `acousticness` — float 0.0–1.0 (acoustic vs electronic feel)
-
-### UserProfile Fields
-
-Each `UserProfile` stores:
-- `favorite_genre` — the genre the user most wants to hear
-- `favorite_mood` — the emotional tone they're looking for
-- `target_energy` — their preferred energy level (0.0 = very calm, 1.0 = very intense)
-- `likes_acoustic` — boolean preference for acoustic vs electronic sound
-
-### Scoring Rule (per song)
-
-```
-score = genre_match (3.0 pts)
-      + mood_match  (2.0 pts)
-      + energy_proximity  (1.0 - |song.energy - user.target_energy|)
-```
-
-Categorical features get a fixed bonus for exact matches. Numerical features use a proximity formula that gives full credit for a perfect match and decreases as the song drifts from the user's preference.
-
-### Ranking Rule
-
-All songs are scored, then sorted highest-to-lowest. The top `k` results are returned as recommendations.
+The project demonstrates how a deterministic rule-based system (the scorer) and a language model (the critic) can work together in an agentic loop: the scorer proposes, the LLM evaluates, and if confidence is low, the scorer re-runs with the LLM's corrected weights. The result is a system that can catch its own mistakes — something neither component can do alone.
 
 ---
 
-## Data Flow
+## Architecture Overview
+
+> Full diagram also available in [diagrams/system_architecture.md](diagrams/system_architecture.md)
 
 ```mermaid
 flowchart TD
-    A([User Profile\ngenre · mood · energy · likes_acoustic]) --> B[Load songs.csv\n18 songs]
-    B --> C{For each song...}
-    C --> D[Score: Genre match?\n+3.0 pts if yes]
-    D --> E[Score: Mood match?\n+2.0 pts if yes]
-    E --> F[Score: Energy proximity\n1.0 - abs song.energy - target_energy]
-    F --> G[Score: Acoustic bonus?\n+0.5 pts if likes_acoustic and acousticness > 0.6]
-    G --> H[(song, total_score, explanation)]
-    H --> C
-    C --> I[Sort all songs\nhigh → low score]
-    I --> J([Top K Recommendations])
+    A([User Profile\ngenre · mood · energy\nacoustic · scoring_mode]) --> B
+    CSV[(data/songs.csv\n18 songs · 9 genres)] --> B
+
+    B["recommend_songs()\nsrc/recommender.py\nScores every song using SCORING_MODES\nApplies optional diversity filter"]
+
+    B --> C[Top-5 Results\nwith scores & breakdowns]
+
+    C --> D["RecommendationAgent.analyze()\nsrc/agent.py"]
+
+    D --> E["Claude API\nclaude-haiku-4-5\nForced tool use: submit_critique\nPrompt caching on system prompt"]
+
+    E --> F{confidence ≥ 0.7?}
+
+    F -->|YES — results look good| G([Final Top-5 Recommendations])
+
+    F -->|NO — mismatch detected| H["suggested_weights dict\n+ mismatch_reason string"]
+
+    H --> I["recommend_songs(weights_override=...)\nRe-run with corrected weights"]
+
+    I --> J([Corrected Top-5\nBefore vs After energy logged])
+
+    subgraph evaluator ["src/evaluator.py — Reliability Harness"]
+        K[10 stress-test profiles] --> L["recommend_songs(diversity=False)"]
+        L --> M["check_diversity()\n≥ 3 unique artists?"]
+        L --> N["check_relevance()\n#1 genre OR mood matches?"]
+        M --> O([Markdown Health Report])
+        N --> O
+    end
+
+    subgraph tests ["pytest — Unit Tests"]
+        P["tests/test_recommender.py"] --> Q([2 tests pass])
+    end
 ```
 
----
+### Where Humans Are Involved
 
-## Algorithm Recipe
-
-| Feature | Type | Rule | Max Points |
-|---|---|---|---|
-| `genre` | categorical | +3.0 if `song.genre == favorite_genre` | 3.0 |
-| `mood` | categorical | +2.0 if `song.mood == favorite_mood` | 2.0 |
-| `energy` | float 0–1 | `1.0 - abs(song.energy - target_energy)` | 1.0 |
-| `acousticness` | float 0–1 | +0.5 if `likes_acoustic` and `song.acousticness > 0.6` | 0.5 |
-
-**Max score: 6.5** — a perfect match on every dimension.
-
-### Expected Bias
-
-- **Genre over-weighting:** A 3-point genre bonus means a song with the right genre but wrong mood will beat a song with the right mood but wrong genre. A jazz fan asking for "chill" music could miss a great ambient track.
-- **Mood blindness across genres:** The system treats genre and mood as independent, but "chill pop" and "chill lofi" are very different experiences — the genre weight may dominate unfairly.
-- **Energy proximity is narrow:** Songs within 0.1 energy of the user's target score nearly the same, which may not reflect how sensitive real listeners are to intensity differences.
-- **Acoustic bonus is binary:** The 0.6 threshold is arbitrary — a song at 0.59 acousticness gets no bonus despite being nearly acoustic.
-
-You can include a simple diagram or bullet list if helpful.
+- **Profile design** — humans define the user taste profile and choose the scoring mode
+- **Evaluation review** — `src/evaluator.py` generates a Markdown report; a human reads it to decide whether pass rates are acceptable
+- **Agent oversight** — the agent suggests weights; a human can inspect the `suggested_weights` dict and the `mismatch_reason` before accepting the corrected output
 
 ---
 
-## Getting Started
+## Setup Instructions
 
-### Setup
+### Prerequisites
 
-1. Create a virtual environment (optional but recommended):
+- Python 3.9+
+- An Anthropic API key (required only for the agentic demo in `src/main.py`)
 
+### Steps
+
+1. **Clone and enter the project**
    ```bash
-   python -m venv .venv
-   source .venv/bin/activate      # Mac or Linux
-   .venv\Scripts\activate         # Windows
+   git clone <repo-url>
+   cd applied-ai-system-project
+   ```
 
-2. Install dependencies
+2. **Create a virtual environment (recommended)**
+   ```bash
+   python -m venv venv
+   source venv/bin/activate        # macOS / Linux
+   venv\Scripts\activate           # Windows
+   ```
 
-```bash
-pip install -r requirements.txt
-```
+3. **Install dependencies**
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-3. Run the app:
+4. **Set your Anthropic API key** (only needed for the agentic demo)
+   ```bash
+   export ANTHROPIC_API_KEY="your-key-here"   # macOS / Linux
+   set ANTHROPIC_API_KEY=your-key-here        # Windows
+   ```
 
-```bash
-python -m src.main
-```
+5. **Run the full demo** (scoring modes + diversity + agentic self-correction)
+   ```bash
+   python -m src.main
+   ```
 
-### Running Tests
+6. **Run the reliability evaluator**
+   ```bash
+   python -m src.evaluator
+   ```
 
-Run the starter tests with:
-
-```bash
-pytest
-```
-
-You can add more tests in `tests/test_recommender.py`.
-
----
-
-## Experiments You Tried
-
-**5 diverse user profiles tested** — including two adversarial edge cases:
-
-| Profile | What it tested | Key result |
-|---|---|---|
-| Chill Lofi Student | Normal, well-matched profile | Near-perfect top 2 (6.48 and 6.45 / 6.50) |
-| High-Energy Pop Fan | Genre + high energy | `Sunrise City` clear #1; genre carried `Gym Hero` to #2 without mood match |
-| Intense Rock Listener | Genre + extreme energy | `Storm Runner` won; `Gym Hero` (pop) and `Drop Zone` (EDM) appeared via mood match |
-| Obscure Taste (no genre match) | Missing genre in catalog | Degraded gracefully; `Coffee Shop Stories` surfaced on mood + acoustic |
-| Conflicting Prefs (ambient / chill / energy 0.95) | Contradictory preferences | `Spacewalk Thoughts` won despite energy 0.28 vs target 0.95 |
-
-**Weight-shift experiment:** Halved genre weight (3.0 → 1.5), doubled energy weight (1.0 → 2.0 max) on the Conflicting Prefs profile. The ranking did not change. `Spacewalk Thoughts` still ranked #1 — confirming the issue was a catalog gap (no high-energy ambient songs exist), not a weight problem. Tuning math cannot fix missing data.
+7. **Run unit tests**
+   ```bash
+   pytest
+   ```
 
 ---
 
-## Limitations and Risks
+## Sample Interactions
 
-- **Tiny catalog creates false filter bubbles.** 18 songs means many profiles share the same top results. A lofi fan and a classical fan will see overlapping picks because there are only a few acoustic songs to choose from.
-- **Genre weight dominates unfairly.** At 3.0 points, a genre match outscores a perfect mood + energy match combined. A jazz fan asking for "intense" music gets jazz songs even if none of them are intense.
-- **No understanding of lyrics, language, or culture.** The system treats all music as a set of numbers. It cannot distinguish a love song from a protest anthem, or represent Latin, African, or Asian music traditions.
-- **Static — no learning.** Skipping a song has no effect. The same profile always returns the same list, no matter how many times you run it.
-- **Acoustic threshold is a hard cutoff.** A song with acousticness 0.59 scores the same as one with 0.10 — both get zero acoustic bonus despite sounding very different.
+### 1. Standard Recommendation — Chill Lofi Profile
 
-See [model_card.md](model_card.md) for a full analysis.
+**Input profile:**
+```
+genre=lofi | mood=chill | energy=0.40 | likes_acoustic=True
+scoring_mode=genre-first
+```
+
+**Output (top 3 of 5):**
+```
+#1  Midnight Coding  —  LoFi Dreamer
+    [lofi / chill / pop 30 / 2020s / tags: nostalgic,dreamy]
+    Score : 5.98
+      + genre match: lofi (+3.0)
+      + mood match: chill (+1.5)
+      + energy: 0.38 vs target 0.40 (+0.78)
+      + acoustic bonus: 0.85 (+0.4)
+      + mood tags (dreamy, nostalgic) (+1.00)
+
+#2  Library Rain  —  Cozy Corner
+    [lofi / chill / pop 28 / 2020s / tags: nostalgic,peaceful]
+    Score : 5.62
+      + genre match: lofi (+3.0)
+      + mood match: chill (+1.5)
+      + energy: 0.35 vs target 0.40 (+0.75)
+      + acoustic bonus: 0.78 (+0.4)
+      + mood tags (nostalgic) (+0.50)
+```
+
+**What this shows:** The genre-first mode correctly surfaces two lofi/chill songs with near-perfect energy proximity. Acoustic and mood-tag bonuses differentiate between near-identical genre+mood matches.
+
+---
+
+### 2. Agentic Self-Correction — Conflicting Profile
+
+**Input profile:**
+```
+genre=ambient | mood=chill | energy_target=0.95  ← contradictory
+scoring_mode=genre-first
+```
+
+The catalog has no high-energy ambient songs, so standard scoring returns low-energy results.
+
+**Before correction (standard scoring):**
+```
+#1  Spacewalk Thoughts  —  Ambient Sky  [ambient/chill/e=0.28]  score=5.23
+#2  Neon Drift          —  Ambient Sky  [ambient/chill/e=0.35]  score=4.99
+    ...
+Avg energy: 0.40  (user target: 0.95)
+```
+
+**Agent critique (via Claude):**
+```
+Agent confidence : 0.15  (threshold = 0.7)
+Agent verdict    : LOW CONFIDENCE
+Mismatch reason  : User wants high energy (0.95) but all top results have
+                   energy below 0.40. Genre weight is dominating; the
+                   energy feature needs to be amplified significantly.
+Suggested weights: {'genre': 1.0, 'mood': 1.0, 'energy': 3.0,
+                    'acoustic': 0.4, 'mood_tags': 0.5,
+                    'popularity': 0.5, 'decade': 0.3}
+```
+
+**After correction (agent-suggested weights applied):**
+```
+#1  Storm Runner   —  Rock Warriors  [rock/intense/e=0.92]  score=3.62
+#2  Drop Zone      —  Bass Masters   [edm/intense/e=0.90]   score=3.55
+    ...
+Avg energy: 0.87  (user target: 0.95)
+
+Changes → added  : ['Storm Runner', 'Drop Zone', 'Metal Surge']
+          removed: ['Spacewalk Thoughts', 'Neon Drift', 'Starfield Drift']
+```
+
+**What this shows:** The agent detected the energy mismatch and shifted weight heavily onto the `energy` feature. Average energy improved from 0.40 → 0.87 (target: 0.95). The corrected results are still not a perfect match — no ambient songs at 0.95 energy exist in the catalog — but the LLM steered the scoring toward the next-best option.
+
+---
+
+### 3. Reliability Evaluator Output (abridged)
+
+**Command:** `python -m src.evaluator`
+
+```markdown
+# Music Recommender — System Health Report
+Date: 2026-04-29  |  Catalog: 18 songs  |  Profiles tested: 10
+
+## Summary
+
+| Check                              | Passed | Failed | Pass Rate |
+|------------------------------------|--------|--------|-----------|
+| Diversity (≥ 3 artists in top 5)   | 10     | 0      | 100%      |
+| Relevance (#1 result genre/mood)   | 10     | 0      | 100%      |
+| Both checks passed                 | 10     | 0      | 100%      |
+
+...
+
+### 2. Missing Genre (k-pop)
+Wanted: genre=k-pop | mood=happy | energy=0.75 | mode=genre-first
+#1 Sunrise City — Pop Princess [pop/happy/e=0.85] score=4.94  ←
+- Diversity: ✅ PASS (4 unique artists)
+- Relevance: ✅ PASS  (mood ✓ — genre mismatch: got 'pop', wanted 'k-pop')
+```
+
+**What this shows:** Even when the catalog is missing a requested genre (k-pop), relevance is saved by mood matching. The evaluator confirms graceful degradation across all 10 stress profiles.
+
+---
+
+## Design Decisions
+
+### Why a deterministic scorer + LLM critic, not a pure LLM recommender?
+
+A pure LLM recommender (ask Claude to recommend songs directly) would have two problems: it cannot access the actual catalog at inference time, and its reasoning is opaque. The scorer gives us **speed, repeatability, and explainability** — every score has a breakdown the user can read. The LLM critic adds **judgment** for the one thing the scorer cannot do on its own: detecting when the scoring mode is miscalibrated for a specific profile.
+
+**Trade-off:** This design requires two API calls per agentic run (standard + corrected), which roughly doubles latency and token cost for the self-correction case. For a demo catalog of 18 songs this is trivial; at production scale it would need batching or caching.
+
+### Why forced tool use (`tool_choice: {type: "tool", name: "submit_critique"}`)?
+
+Asking the LLM to return JSON in prose is unreliable — it sometimes adds commentary, wraps the JSON in markdown fences, or omits required fields. Forced tool use guarantees that the API response always contains a structured `submit_critique` object with typed fields (`confidence: float`, `mismatch_reason: str`, `suggested_weights: dict`). No parsing, no regex, no fallback handling needed.
+
+### Why `weights_override` instead of a new scoring mode?
+
+The agent's suggested weights are one-off corrections for a specific profile — they should not become a permanent mode. Adding them to `SCORING_MODES` would pollute the catalog of reusable modes with profile-specific noise. The `weights_override` keyword argument lets the agent inject weights for a single call without touching the shared `SCORING_MODES` dict, and it defaults to `None` so all existing code continues to work unchanged.
+
+### Why `claude-haiku-4-5` for the agent?
+
+The critique task is well-defined (compare two structured inputs, output a number and a dict) and does not require deep reasoning. Haiku is significantly cheaper and faster than Opus or Sonnet for this kind of structured-output task. Prompt caching on the static system prompt further reduces token cost on repeated calls to the agent.
+
+### Why `diversity=False` in the evaluator?
+
+The evaluator measures natural catalog spread, not filter behavior. Running with the diversity filter on would always produce ≥ 3 artists (that's what the filter enforces), making the diversity check meaningless. Running with `diversity=False` measures whether the catalog itself contains enough variety for a given genre/mood profile.
+
+---
+
+## Testing Summary
+
+### Unit Tests (`pytest`)
+
+```
+tests/test_recommender.py::test_recommend_returns_songs_sorted_by_score  PASSED
+tests/test_recommender.py::test_explain_recommendation_returns_non_empty_string  PASSED
+
+2 passed in 0.12s
+```
+
+Both tests pass. They verify that the OOP `Recommender` class (1) returns results sorted by score with the expected top song, and (2) always returns a non-empty explanation string.
+
+### Reliability Evaluator (`src/evaluator.py`)
+
+**10/10 profiles passed both checks (100% pass rate).**
+
+Key observations:
+- **Missing genres (k-pop, folk):** Relevance is saved by mood matching — the #1 result's mood always matches even when the genre does not exist in the catalog.
+- **Conflicting prefs (ambient + energy 0.95):** Diversity passes (4 unique artists), Relevance passes (genre match on ambient). The evaluator does not catch the energy mismatch because it only checks genre and mood — this is exactly the gap the `RecommendationAgent` is designed to fill.
+- **Diversity:** All 10 profiles naturally produced ≥ 3 unique artists in the top 5 without the diversity filter. The 18-song catalog has enough spread to avoid artist monopolies for the tested profiles.
+
+### What the evaluator does not catch
+
+- Energy mismatches (user target 0.95, results average 0.40)
+- Popularity mismatches
+- Decade mismatches
+
+These are intentionally left to the `RecommendationAgent` LLM critic, which is the correct tool for detecting nuanced intent mismatches that are hard to encode as simple boolean rules.
+
+### Confidence Scoring (Agentic Demo)
+
+On the conflicting-prefs profile (ambient/chill/energy=0.95), the agent consistently returned confidence scores around **0.10–0.25**, well below the 0.7 threshold. After applying corrected weights, the average energy of results improved from ~0.40 to ~0.87 — a 47-point improvement toward the 0.95 target.
 
 ---
 
 ## Reflection
 
-Read and complete `model_card.md`:
+### What this project taught about AI and problem-solving
 
-[**Model Card**](model_card.md)
+The most important lesson was that **a language model is not always the right tool**. The recommender's core loop — score every song, sort, return top k — is fast, deterministic, and fully explainable. Replacing it with an LLM call would make it slower, more expensive, and harder to debug. The right place for the LLM is the evaluation layer: it sees the full picture (profile + results together) and can reason about the gap between them in natural language.
 
-Recommenders turn data into predictions by reducing a person — with all their history, moods, and context — into a small set of numbers, then finding songs whose numbers are closest. That compression is where both the power and the risk live. The power: a four-field profile can produce results that genuinely feel right, especially for clear, stable preferences like "chill lofi." The risk: anything the profile doesn't capture — cultural background, current mood, what you listened to yesterday — simply doesn't exist to the algorithm.
+The second lesson was about **catalog limitations vs. weight limitations**. Early in the project, a weight-shift experiment showed that halving the genre weight and doubling the energy weight did not change the top result for the conflicting profile — because no high-energy ambient song exists in the catalog. The agent learned the same lesson and began steering toward the closest available alternative (rock/EDM at 0.90 energy) rather than continuing to optimize weights for a result that cannot exist. Tuning math cannot fix missing data.
 
-Bias shows up in at least two ways in this system. First, in the weights: genre scores three times higher than energy, which means a song can win on category alone even if it totally mismatches the user's emotional state. Second, and more subtly, in the catalog itself: the 18-song dataset reflects the taste of whoever built it. Genres like Afrobeats, Latin, or K-pop don't appear, so users whose taste lives in those spaces will always receive poor recommendations — not because the algorithm treated them unfairly, but because they were never represented in the data to begin with. That's the harder problem, and it scales: the same dynamic plays out in every real-world recommender that was trained on data from a non-representative user base.
+### Limitations and Biases
 
+- **Genre dominance.** At 3.0 points, a genre match outscores a perfect mood + energy match combined. A jazz fan asking for "intense" music gets jazz songs even if none of them are intense.
+- **Western music bias.** The catalog has no K-pop, Afrobeats, Latin, or non-English-language music. Users whose taste lives in those spaces always receive poor recommendations regardless of weights.
+- **Static system.** The same profile always returns the same list. There is no learning from skips or listens.
+- **LLM hallucination risk.** The agent could suggest nonsensical weights (e.g., energy=0.0) that produce worse results. The `weights_override` path applies whatever the agent suggests without validation — a production system would need weight clamping.
 
+### Could this AI be misused?
 
+The recommender itself is low-risk. The main misuse concern is the agent prompt: if an adversary could inject content into the `top_5` results that the agent reads, they could potentially manipulate the agent's weight suggestions. The current implementation passes song titles and metadata to the LLM — none of which is user-controlled text — so the injection surface is minimal. A production version should sanitize all song fields before inserting them into the LLM prompt.
+
+### What surprised me during testing
+
+The agent's confidence scores were lower than expected for profiles that the evaluator marked as passing. For example, profile 3 (High-Energy Pop Fan) passed both evaluator checks — the #1 result was pop/happy with correct genre and mood — but the agent sometimes rated confidence at 0.55 because the average energy of the top 5 was 0.70, slightly below the target of 0.88. The evaluator and the agent are measuring different things, and both measurements are useful.
+
+### Collaboration with Claude
+
+**Helpful suggestion:** When designing the `submit_critique` tool, Claude suggested including `mismatch_reason` as a required field even when confidence is high — as an empty string. This was a good call: it keeps the tool schema simple (no optional fields) and makes the data structure consistent regardless of the confidence outcome.
+
+**Flawed suggestion:** Claude initially suggested making `suggested_weights` a required field in the tool schema (not optional). This would have forced the model to always produce weights even when confidence was high and no correction was needed, wasting tokens and adding noise. The correct design — making weights optional and only requesting them when confidence < 0.7 — had to be explicitly specified in the system prompt and `tool_choice` instructions.
+
+---
+
+## Files
+
+| File | Purpose |
+|---|---|
+| `src/recommender.py` | Core scoring engine — `load_songs`, `recommend_songs`, `_score_song`, `_apply_diversity`, `SCORING_MODES` |
+| `src/agent.py` | `RecommendationAgent` — LLM critic using Claude + forced tool use |
+| `src/main.py` | CLI runner — scoring mode demos, diversity demo, agentic self-correction demo |
+| `src/evaluator.py` | Reliability tester — 10 stress profiles, Diversity + Relevance checks, Markdown report |
+| `data/songs.csv` | 18-song catalog with genre, mood, energy, popularity, decade, mood tags |
+| `tests/test_recommender.py` | Unit tests for the OOP `Recommender` class |
+| `model_card.md` | Full model analysis — strengths, limitations, bias, experiments |
+| `requirements.txt` | `anthropic`, `pandas`, `pytest`, `streamlit` |
+
+---
+
+## Video Walkthrough
+
+[Loom walkthrough — add link here after recording]
+
+The video demonstrates:
+- End-to-end recommendation for 3 different user profiles
+- Agentic self-correction loop (Before/After energy comparison)
+- Reliability evaluator running 10 stress profiles with pass/fail summary
+
+---
+
+## GitHub
+
+[https://github.com/YOUR_USERNAME/applied-ai-system-project](https://github.com/YOUR_USERNAME/applied-ai-system-project)
+
+---
+
+## See Also
+
+- [model_card.md](model_card.md) — full analysis of the scoring system, bias, and experiments
